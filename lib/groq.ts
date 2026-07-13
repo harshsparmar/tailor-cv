@@ -60,10 +60,31 @@ QUALITY
 
 RESPOND WITH ONLY VALID JSON — no markdown, no code blocks, no text outside the JSON object.`;
 
+export interface CascadeAttempt {
+  model: string;
+  ok: boolean;
+  httpStatus?: number;
+  errorCode?: string;
+  latencyMs: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}
+
+export interface CascadeMeta {
+  modelUsed: string | null;
+  failoverOccurred: boolean;
+  attempts: CascadeAttempt[];
+  totalLatencyMs: number;
+  parseError?: string | null;
+  rawText?: string;
+}
+
 export async function generateOptimizedResume(
   jobDescription: string,
-  resumeOverride?: ResumeData
-): Promise<ResumeGenerationResult> {
+  resumeOverride?: ResumeData,
+  options?: { forceModel?: string; forceMaxTokens?: number; forceReasoningEffort?: "none" | "low" | "medium" | "high" }
+): Promise<ResumeGenerationResult & { _cascadeMeta?: CascadeMeta }> {
   const masterResume = resumeOverride ?? defaultResume;
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
@@ -142,17 +163,31 @@ Return a JSON object with EXACTLY this structure:
   // Each model family has its own independent rate-limit quota on Groq.
   // llama-3.1-8b-instant removed: hard 6K TPM limit always fails our ~10K token prompt.
   const primaryModel = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
-  const MODELS = [
+  const CASCADE_MODELS = [
     primaryModel,                                    // Llama 3.3 70B — primary
     "qwen/qwen3-32b",                                // Qwen family — separate quota
     "meta-llama/llama-4-scout-17b-16e-instruct",    // Llama 4 family — separate quota
     "openai/gpt-oss-20b",                            // OpenAI OSS family — separate quota
   ].filter((m, i, arr) => arr.indexOf(m) === i);
 
+  // RESEARCH INSTRUMENTATION (local dev / experiment use only):
+  // When options.forceModel is set AND the ALLOW_MODEL_OVERRIDE env var is
+  // enabled, the cascade is bypassed and exactly one model is called. This
+  // exists solely to let the quality-degradation study call each cascade
+  // stage directly instead of waiting for a real rate-limit failover.
+  // It never activates unless ALLOW_MODEL_OVERRIDE=true is set locally.
+  const overrideEnabled = process.env.ALLOW_MODEL_OVERRIDE === "true";
+  const MODELS = overrideEnabled && options?.forceModel
+    ? [options.forceModel]
+    : CASCADE_MODELS;
+
   let text: string | null = null;
   let lastError: unknown;
+  const attempts: CascadeAttempt[] = [];
+  const cascadeStart = Date.now();
 
   for (const model of MODELS) {
+    const attemptStart = Date.now();
     try {
       const completion = await groq.chat.completions.create({
         model,
@@ -161,19 +196,44 @@ Return a JSON object with EXACTLY this structure:
           { role: "user", content: userPrompt },
         ],
         temperature: 0.3,
-        max_tokens: 8192,
+        max_tokens: (overrideEnabled && options?.forceMaxTokens) || 8192,
         response_format: { type: "json_object" },
-      });
+        ...(overrideEnabled && options?.forceReasoningEffort
+          ? { reasoning_effort: options.forceReasoningEffort }
+          : {}),
+      } as Parameters<typeof groq.chat.completions.create>[0]);
       text = completion.choices[0]?.message?.content ?? null;
+      attempts.push({
+        model,
+        ok: !!text,
+        latencyMs: Date.now() - attemptStart,
+        promptTokens: completion.usage?.prompt_tokens,
+        completionTokens: completion.usage?.completion_tokens,
+        totalTokens: completion.usage?.total_tokens,
+      });
       if (text) break;
     } catch (err: unknown) {
       lastError = err;
       const e = err as { status?: number; error?: { code?: string } };
+      attempts.push({
+        model,
+        ok: false,
+        httpStatus: e?.status,
+        errorCode: e?.error?.code,
+        latencyMs: Date.now() - attemptStart,
+      });
       const skip = e?.status === 429 || e?.status === 413 || e?.error?.code === "model_decommissioned";
       if (skip) continue;
       throw err;
     }
   }
+
+  const cascadeMeta: CascadeMeta = {
+    modelUsed: attempts.find((a) => a.ok)?.model ?? null,
+    failoverOccurred: attempts.length > 1,
+    attempts,
+    totalLatencyMs: Date.now() - cascadeStart,
+  };
 
   if (!text) {
     if (lastError) throw lastError;
@@ -197,13 +257,20 @@ Return a JSON object with EXACTLY this structure:
     suggestions?: string[];
   };
 
+  let parseError: string | null = null;
   try {
     const jsonStart = text.indexOf("{");
     const jsonEnd = text.lastIndexOf("}");
     const jsonStr = jsonStart !== -1 && jsonEnd !== -1 ? text.slice(jsonStart, jsonEnd + 1) : text;
     parsed = JSON.parse(jsonStr);
-  } catch {
-    throw new Error("Failed to parse AI response. Please try again.");
+  } catch (e) {
+    // Research instrumentation: a malformed/unparseable response from a
+    // cascade stage is itself a quality-degradation data point, not just an
+    // error to hide. Record it and fall back to the untouched master resume
+    // instead of throwing, so the experiment harness gets a labeled failure
+    // rather than a dropped request.
+    parseError = e instanceof Error ? e.message : "JSON parse failed";
+    parsed = {};
   }
 
   const optimizedResume = parsed.optimizedResume ?? masterResume;
@@ -234,5 +301,96 @@ Return a JSON object with EXACTLY this structure:
     },
     suggestions: parsed.suggestions || [],
     jobDescription,
+    _cascadeMeta: { ...cascadeMeta, parseError, rawText: parseError ? text : undefined },
   };
+}
+
+export async function generateEmailBody(params: {
+  resume: ResumeData;
+  jobTitle: string;
+  company: string;
+  jobDescription?: string;
+}): Promise<{ subject: string; body: string }> {
+  const { resume, jobTitle, company, jobDescription } = params;
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    throw new Error("GROQ_API_KEY environment variable is not set");
+  }
+  const groq = new Groq({ apiKey });
+
+  const experienceBlock = (resume.experience || [])
+    .map((e) => `- ${e.title} at ${e.company} (${e.startDate}–${e.endDate}):\n${e.bullets.map((b) => `  * ${b}`).join("\n")}`)
+    .join("\n");
+  const projectsBlock = (resume.projects || [])
+    .slice(0, 3)
+    .map((p) => `- ${p.name}: ${p.description}`)
+    .join("\n");
+  const skillsBlock = Object.values(resume.skills || {}).flat().filter(Boolean).join(", ");
+
+  const prompt = `You are writing a job-application email as the CANDIDATE below, to send to a recruiter with their resume attached.
+
+ROLE: ${jobTitle}
+COMPANY: ${company || "the company"}
+${jobDescription ? `JOB DESCRIPTION (use this to pick which 2-3 achievements/skills to feature — do not quote it back verbatim):\n${jobDescription.slice(0, 2500)}\n` : ""}
+CANDIDATE SUMMARY:
+${resume.summary}
+
+CANDIDATE WORK EXPERIENCE:
+${experienceBlock}
+
+CANDIDATE PROJECTS:
+${projectsBlock}
+
+CANDIDATE SKILLS:
+${skillsBlock}
+
+CANDIDATE NAME: ${resume.personalInfo.name}
+CANDIDATE PHONE: ${resume.personalInfo.phone}
+CANDIDATE EMAIL: ${resume.personalInfo.email}
+
+Write a subject line and an email body.
+
+SUBJECT: under 80 characters, format like "Application for ${jobTitle}${company ? ` – ${company}` : ""}" or similar, specific to the role.
+
+BODY — follow this exact structure, separated by blank lines:
+1. Greeting: "Dear Hiring Manager," (or "Dear ${company} Recruiting Team," if a company name is given).
+2. Opening line: name the exact role and company, and how many years/what kind of experience the candidate brings — one sentence, no filler like "I am excited to apply".
+3. Middle paragraph (2-3 sentences): reference 2-3 SPECIFIC achievements or projects from the candidate's actual experience/projects above — include real numbers/metrics if present in the bullets — and connect them directly to what the job description asks for. Do not just list skill names; describe what was built or achieved.
+4. Closing line: mention the attached resume and invite next steps (a call/interview).
+5. Sign-off: "Best regards," then the candidate's name, phone, and email — each on its own line, with NO blank line between the sign-off, the name, the phone, and the email (single \\n only there, not \\n\\n).
+
+Rules: no generic filler phrases ("I am confident in my ability", "I am a good fit", "team player"), no invented facts beyond what's given above, professional and concise (120-170 words for the body). Use exactly ONE blank line (\\n\\n) between paragraphs 1-4, and never more than one blank line anywhere.
+
+Respond with ONLY valid JSON: {"subject": "...", "body": "..."}`;
+
+  const completion = await groq.chat.completions.create({
+    model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.4,
+    max_tokens: 900,
+    response_format: { type: "json_object" },
+  });
+
+  const text = completion.choices[0]?.message?.content;
+  if (!text) throw new Error("Empty response from Groq API. Please try again.");
+
+  const jsonStart = text.indexOf("{");
+  const jsonEnd = text.lastIndexOf("}");
+  const parsed = JSON.parse(jsonStart !== -1 && jsonEnd !== -1 ? text.slice(jsonStart, jsonEnd + 1) : text);
+
+  return {
+    subject: parsed.subject || `Application for ${jobTitle}`,
+    body: parsed.body ? normalizeEmailBody(parsed.body) : "",
+  };
+}
+
+// LLMs don't reliably follow spacing instructions — cap blank lines between
+// paragraphs at one, and strip blank lines within the sign-off block (name/
+// phone/email), which the model otherwise double-spaces like every other line.
+function normalizeEmailBody(raw: string): string {
+  const body = raw.trim().replace(/\n{3,}/g, "\n\n");
+  const signOff = body.search(/\n\n(Best regards|Regards|Sincerely|Warm regards|Kind regards|Thanks|Thank you)[,.]?\s*\n/i);
+  if (signOff === -1) return body;
+  const splitAt = signOff + 2;
+  return body.slice(0, splitAt) + body.slice(splitAt).replace(/\n{2,}/g, "\n");
 }

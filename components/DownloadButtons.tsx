@@ -1,21 +1,24 @@
 "use client";
 
 import { useState } from "react";
-import { FileText, FileDown, Loader2, Check } from "lucide-react";
+import { FileText, FileDown, Mail, Loader2, Check } from "lucide-react";
 import { cn, downloadBlob, sanitizeFilename } from "@/lib/utils";
 import type { ResumeData } from "@/types/resume";
+import { EmailResumeModal } from "@/components/EmailResumeModal";
 
 interface Props {
   resume: ResumeData;
   jobTitle: string;
   company: string;
+  jobDescription?: string;
 }
 
 type DownloadState = "idle" | "loading" | "done" | "error";
 
-export function DownloadButtons({ resume, jobTitle, company }: Props) {
+export function DownloadButtons({ resume, jobTitle, company, jobDescription }: Props) {
   const [pdfState,  setPdfState]  = useState<DownloadState>("idle");
   const [docxState, setDocxState] = useState<DownloadState>("idle");
+  const [emailOpen, setEmailOpen] = useState(false);
 
   async function handleDownload(format: "pdf" | "docx") {
     const setState = format === "pdf" ? setPdfState : setDocxState;
@@ -53,14 +56,31 @@ export function DownloadButtons({ resume, jobTitle, company }: Props) {
         state={docxState}
         onClick={() => handleDownload("docx")}
       />
+      <Btn
+        label="Resume"
+        idleLabel="Email Resume"
+        icon={<Mail className="w-3.5 h-3.5" />}
+        state="idle"
+        onClick={() => setEmailOpen(true)}
+      />
+      {emailOpen && (
+        <EmailResumeModal
+          resume={resume}
+          jobTitle={jobTitle}
+          company={company}
+          jobDescription={jobDescription}
+          onClose={() => setEmailOpen(false)}
+        />
+      )}
     </div>
   );
 }
 
 function Btn({
-  label, icon, state, onClick,
+  label, idleLabel, icon, state, onClick,
 }: {
   label: string;
+  idleLabel?: string;
   icon: React.ReactNode;
   state: DownloadState;
   onClick: () => void;
@@ -90,7 +110,7 @@ function Btn({
       ) : (
         icon
       )}
-      {error ? "Retry" : done ? "Saved" : `Export ${label}`}
+      {error ? "Retry" : done ? "Saved" : idleLabel ?? `Export ${label}`}
     </button>
   );
 }

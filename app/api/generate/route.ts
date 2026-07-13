@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { jobDescription, uploadedResume } = body;
+    const { jobDescription, uploadedResume, forceModel, forceMaxTokens, forceReasoningEffort } = body;
 
     if (!jobDescription || typeof jobDescription !== "string") {
       return NextResponse.json(
@@ -36,7 +36,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = await generateOptimizedResume(jobDescription, uploadedResume);
+    const result = await generateOptimizedResume(
+      jobDescription,
+      uploadedResume,
+      (forceModel || forceMaxTokens || forceReasoningEffort)
+        ? { forceModel, forceMaxTokens, forceReasoningEffort }
+        : undefined
+    );
     return NextResponse.json(result, { status: 200 });
   } catch (error) {
     console.error("[/api/generate] Error:", error);

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import puppeteer from "puppeteer";
-import { buildResumeHtml } from "@/lib/resume-html-template";
+import { generateResumePdf } from "@/lib/pdf";
 import type { ResumeData } from "@/types/resume";
 
 export const runtime = "nodejs";
@@ -18,28 +17,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid resume data" }, { status: 400 });
     }
 
-    const html = buildResumeHtml(resume);
-
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage", // prevents crashes in containers with small /dev/shm
-        "--disable-gpu",
-      ],
-    });
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "load" });
-    // Give Tailwind CDN time to generate styles
-    await new Promise((r) => setTimeout(r, 1500));
-
-    const pdf = await page.pdf({
-      format: "Letter",
-      printBackground: true,
-      margin: { top: "0", right: "0", bottom: "0", left: "0" },
-    });
-    await browser.close();
+    const pdf = await generateResumePdf(resume);
 
     const name     = resume.personalInfo.name.replace(/\s+/g, "_");
     const filename = `${name}_Resume_${(jobTitle || "Optimized").replace(/\s+/g, "_")}.pdf`;

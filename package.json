@@ -21,6 +21,7 @@
     "lucide-react": "^0.379.0",
     "next": "^14.2.35",
     "next-themes": "^0.3.0",
+    "nodemailer": "^9.0.3",
     "pdf-parse": "1.1.1",
     "puppeteer": "^25.1.0",
     "react": "^18",
@@ -31,6 +32,7 @@
   },
   "devDependencies": {
     "@types/node": "^20",
+    "@types/nodemailer": "^8.0.1",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "@types/uuid": "^10",

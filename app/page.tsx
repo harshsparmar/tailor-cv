@@ -308,6 +308,7 @@ export default function HomePage() {
                     resume={result.optimizedResume}
                     jobTitle={result.jobTitle}
                     company={result.company}
+                    jobDescription={result.jobDescription}
                   />
                 </div>
 
