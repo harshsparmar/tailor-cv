@@ -198,10 +198,11 @@ Return a JSON object with EXACTLY this structure:
         temperature: 0.3,
         max_tokens: (overrideEnabled && options?.forceMaxTokens) || 8192,
         response_format: { type: "json_object" },
+        stream: false,
         ...(overrideEnabled && options?.forceReasoningEffort
           ? { reasoning_effort: options.forceReasoningEffort }
           : {}),
-      } as Parameters<typeof groq.chat.completions.create>[0]);
+      });
       text = completion.choices[0]?.message?.content ?? null;
       attempts.push({
         model,
