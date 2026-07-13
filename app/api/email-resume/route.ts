@@ -7,6 +7,14 @@ export const runtime = "nodejs";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+function toHtml(text: string): string {
+  const escaped = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;white-space:pre-wrap;">${escaped}</div>`;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -36,6 +44,7 @@ export async function POST(req: NextRequest) {
       replyTo: resume.personalInfo.email,
       subject: subject || `Application for ${jobTitle}`,
       text: message,
+      html: toHtml(message),
       attachments: [{ filename, content: Buffer.from(pdf), contentType: "application/pdf" }],
     });
 

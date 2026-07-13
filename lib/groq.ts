@@ -80,6 +80,88 @@ export interface CascadeMeta {
   rawText?: string;
 }
 
+// Each model family below has its own independent rate-limit quota on Groq,
+// so failing over to the next one recovers from a 429 that would otherwise
+// kill the request. Primary model can be overridden via GROQ_MODEL env var.
+// llama-3.1-8b-instant removed: hard 6K TPM limit always fails our ~10K token prompt.
+const CASCADE_MODELS = [
+  process.env.GROQ_MODEL || "llama-3.3-70b-versatile", // Llama 3.3 70B — primary
+  "qwen/qwen3-32b",                                     // Qwen family — separate quota
+  "meta-llama/llama-4-scout-17b-16e-instruct",         // Llama 4 family — separate quota
+  "openai/gpt-oss-20b",                                 // OpenAI OSS family — separate quota
+].filter((m, i, arr) => arr.indexOf(m) === i);
+
+// Tries each model in `models` in order, skipping to the next on rate-limit
+// (429), payload-too-large (413), or decommissioned-model errors. Any other
+// error aborts immediately since retrying won't help.
+async function runGroqCascade(params: {
+  groq: Groq;
+  models: string[];
+  messages: { role: "system" | "user"; content: string }[];
+  temperature: number;
+  maxTokens: number;
+  reasoningEffort?: "none" | "low" | "medium" | "high";
+}): Promise<{ text: string | null; cascadeMeta: CascadeMeta; lastError: unknown }> {
+  const { groq, models, messages, temperature, maxTokens, reasoningEffort } = params;
+
+  let text: string | null = null;
+  let lastError: unknown;
+  const attempts: CascadeAttempt[] = [];
+  const cascadeStart = Date.now();
+
+  for (const model of models) {
+    const attemptStart = Date.now();
+    try {
+      const completion = await groq.chat.completions.create({
+        model,
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+        response_format: { type: "json_object" },
+        stream: false,
+        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+      });
+      text = completion.choices[0]?.message?.content ?? null;
+      attempts.push({
+        model,
+        ok: !!text,
+        latencyMs: Date.now() - attemptStart,
+        promptTokens: completion.usage?.prompt_tokens,
+        completionTokens: completion.usage?.completion_tokens,
+        totalTokens: completion.usage?.total_tokens,
+      });
+      if (text) break;
+    } catch (err: unknown) {
+      lastError = err;
+      // groq-sdk's APIError puts the raw API error body on `.error`, which for
+      // Groq is itself wrapped as { error: { code, message, ... } } — so the
+      // code we want is `.error.error.code`, not `.error.code`.
+      const e = err as { status?: number; error?: { error?: { code?: string } } };
+      const errorCode = e?.error?.error?.code;
+      attempts.push({
+        model,
+        ok: false,
+        httpStatus: e?.status,
+        errorCode,
+        latencyMs: Date.now() - attemptStart,
+      });
+      const skip = e?.status === 429 || e?.status === 413
+        || errorCode === "model_decommissioned" || errorCode === "json_validate_failed";
+      if (skip) continue;
+      throw err;
+    }
+  }
+
+  const cascadeMeta: CascadeMeta = {
+    modelUsed: attempts.find((a) => a.ok)?.model ?? null,
+    failoverOccurred: attempts.length > 1,
+    attempts,
+    totalLatencyMs: Date.now() - cascadeStart,
+  };
+
+  return { text, cascadeMeta, lastError };
+}
+
 export async function generateOptimizedResume(
   jobDescription: string,
   resumeOverride?: ResumeData,
@@ -157,19 +239,6 @@ Return a JSON object with EXACTLY this structure:
   ]
 }`;
 
-  // Primary model can be overridden via GROQ_MODEL env var.
-  // Check https://console.groq.com/docs/models for currently available IDs.
-  // Primary model can be overridden via GROQ_MODEL env var.
-  // Each model family has its own independent rate-limit quota on Groq.
-  // llama-3.1-8b-instant removed: hard 6K TPM limit always fails our ~10K token prompt.
-  const primaryModel = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
-  const CASCADE_MODELS = [
-    primaryModel,                                    // Llama 3.3 70B — primary
-    "qwen/qwen3-32b",                                // Qwen family — separate quota
-    "meta-llama/llama-4-scout-17b-16e-instruct",    // Llama 4 family — separate quota
-    "openai/gpt-oss-20b",                            // OpenAI OSS family — separate quota
-  ].filter((m, i, arr) => arr.indexOf(m) === i);
-
   // RESEARCH INSTRUMENTATION (local dev / experiment use only):
   // When options.forceModel is set AND the ALLOW_MODEL_OVERRIDE env var is
   // enabled, the cascade is bypassed and exactly one model is called. This
@@ -181,60 +250,17 @@ Return a JSON object with EXACTLY this structure:
     ? [options.forceModel]
     : CASCADE_MODELS;
 
-  let text: string | null = null;
-  let lastError: unknown;
-  const attempts: CascadeAttempt[] = [];
-  const cascadeStart = Date.now();
-
-  for (const model of MODELS) {
-    const attemptStart = Date.now();
-    try {
-      const completion = await groq.chat.completions.create({
-        model,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.3,
-        max_tokens: (overrideEnabled && options?.forceMaxTokens) || 8192,
-        response_format: { type: "json_object" },
-        stream: false,
-        ...(overrideEnabled && options?.forceReasoningEffort
-          ? { reasoning_effort: options.forceReasoningEffort }
-          : {}),
-      });
-      text = completion.choices[0]?.message?.content ?? null;
-      attempts.push({
-        model,
-        ok: !!text,
-        latencyMs: Date.now() - attemptStart,
-        promptTokens: completion.usage?.prompt_tokens,
-        completionTokens: completion.usage?.completion_tokens,
-        totalTokens: completion.usage?.total_tokens,
-      });
-      if (text) break;
-    } catch (err: unknown) {
-      lastError = err;
-      const e = err as { status?: number; error?: { code?: string } };
-      attempts.push({
-        model,
-        ok: false,
-        httpStatus: e?.status,
-        errorCode: e?.error?.code,
-        latencyMs: Date.now() - attemptStart,
-      });
-      const skip = e?.status === 429 || e?.status === 413 || e?.error?.code === "model_decommissioned";
-      if (skip) continue;
-      throw err;
-    }
-  }
-
-  const cascadeMeta: CascadeMeta = {
-    modelUsed: attempts.find((a) => a.ok)?.model ?? null,
-    failoverOccurred: attempts.length > 1,
-    attempts,
-    totalLatencyMs: Date.now() - cascadeStart,
-  };
+  const { text, cascadeMeta, lastError } = await runGroqCascade({
+    groq,
+    models: MODELS,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userPrompt },
+    ],
+    temperature: 0.3,
+    maxTokens: (overrideEnabled && options?.forceMaxTokens) || 8192,
+    reasoningEffort: overrideEnabled ? options?.forceReasoningEffort : undefined,
+  });
 
   if (!text) {
     if (lastError) throw lastError;
@@ -357,23 +383,26 @@ BODY — follow this exact structure, separated by blank lines:
 1. Greeting: "Dear Hiring Manager," (or "Dear ${company} Recruiting Team," if a company name is given).
 2. Opening line: name the exact role and company, and how many years/what kind of experience the candidate brings — one sentence, no filler like "I am excited to apply".
 3. Middle paragraph (2-3 sentences): reference 2-3 SPECIFIC achievements or projects from the candidate's actual experience/projects above — include real numbers/metrics if present in the bullets — and connect them directly to what the job description asks for. Do not just list skill names; describe what was built or achieved.
-4. Closing line: mention the attached resume and invite next steps (a call/interview).
-5. Sign-off: "Best regards," then the candidate's name, phone, and email — each on its own line, with NO blank line between the sign-off, the name, the phone, and the email (single \\n only there, not \\n\\n).
+4. Closing line: mention the attached resume and invite next steps (a call/interview), then end with "Best regards,".
 
-Rules: no generic filler phrases ("I am confident in my ability", "I am a good fit", "team player"), no invented facts beyond what's given above, professional and concise (120-170 words for the body). Use exactly ONE blank line (\\n\\n) between paragraphs 1-4, and never more than one blank line anywhere.
+Do NOT include the candidate's name, phone, portfolio, or email anywhere in the body — a signature block with those is appended automatically after your text, so the body must end right after "Best regards,".
+
+Rules: no generic filler phrases ("I am confident in my ability", "I am a good fit", "team player"), no invented facts beyond what's given above, professional and concise (100-150 words for the body). Use exactly ONE blank line (\\n\\n) between paragraphs, and never more than one blank line anywhere.
 
 Respond with ONLY valid JSON: {"subject": "...", "body": "..."}`;
 
-  const completion = await groq.chat.completions.create({
-    model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+  const { text, lastError } = await runGroqCascade({
+    groq,
+    models: CASCADE_MODELS,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.4,
-    max_tokens: 900,
-    response_format: { type: "json_object" },
+    maxTokens: 900,
   });
 
-  const text = completion.choices[0]?.message?.content;
-  if (!text) throw new Error("Empty response from Groq API. Please try again.");
+  if (!text) {
+    if (lastError) throw lastError;
+    throw new Error("Empty response from Groq API. Please try again.");
+  }
 
   const jsonStart = text.indexOf("{");
   const jsonEnd = text.lastIndexOf("}");
@@ -381,17 +410,27 @@ Respond with ONLY valid JSON: {"subject": "...", "body": "..."}`;
 
   return {
     subject: parsed.subject || `Application for ${jobTitle}`,
-    body: parsed.body ? normalizeEmailBody(parsed.body) : "",
+    body: parsed.body ? normalizeEmailBody(parsed.body, resume) : "",
   };
 }
 
-// LLMs don't reliably follow spacing instructions — cap blank lines between
-// paragraphs at one, and strip blank lines within the sign-off block (name/
-// phone/email), which the model otherwise double-spaces like every other line.
-function normalizeEmailBody(raw: string): string {
+function buildEmailSignature(resume: ResumeData): string {
+  return [
+    resume.personalInfo.name,
+    resume.personalInfo.portfolio,
+    `${resume.personalInfo.phone} | ${resume.personalInfo.email}`,
+  ].filter(Boolean).join("\n");
+}
+
+// LLMs don't reliably format contact details or spacing — cap blank lines
+// between paragraphs at one, then replace anything from the closing phrase
+// onward with a deterministic signature block instead of trusting the model
+// to reproduce name/phone/portfolio/email correctly.
+function normalizeEmailBody(raw: string, resume: ResumeData): string {
   const body = raw.trim().replace(/\n{3,}/g, "\n\n");
-  const signOff = body.search(/\n\n(Best regards|Regards|Sincerely|Warm regards|Kind regards|Thanks|Thank you)[,.]?\s*\n/i);
-  if (signOff === -1) return body;
-  const splitAt = signOff + 2;
-  return body.slice(0, splitAt) + body.slice(splitAt).replace(/\n{2,}/g, "\n");
+  const closingRe = /(Best regards|Regards|Sincerely|Warm regards|Kind regards|Thanks|Thank you)[,.]?/i;
+  const match = body.match(closingRe);
+  const closingLine = match ? match[0].replace(/[,.]?$/, ",") : "Best regards,";
+  const head = match?.index !== undefined ? body.slice(0, match.index).trimEnd() : body;
+  return `${head}\n\n${closingLine}\n${buildEmailSignature(resume)}`;
 }

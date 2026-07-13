@@ -63,15 +63,14 @@ export function DownloadButtons({ resume, jobTitle, company, jobDescription }: P
         state="idle"
         onClick={() => setEmailOpen(true)}
       />
-      {emailOpen && (
-        <EmailResumeModal
-          resume={resume}
-          jobTitle={jobTitle}
-          company={company}
-          jobDescription={jobDescription}
-          onClose={() => setEmailOpen(false)}
-        />
-      )}
+      <EmailResumeModal
+        open={emailOpen}
+        resume={resume}
+        jobTitle={jobTitle}
+        company={company}
+        jobDescription={jobDescription}
+        onClose={() => setEmailOpen(false)}
+      />
     </div>
   );
 }

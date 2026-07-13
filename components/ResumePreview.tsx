@@ -88,50 +88,8 @@ export const ResumePreview = React.forwardRef<HTMLDivElement, Props>(function Re
             {personalInfo.name}
           </h1>
           <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-[11px] text-gray-600">
-            <a
-              href={`mailto:${personalInfo.email}`}
-              className="hover:text-blue-700 hover:underline transition-colors"
-            >
-              {personalInfo.email}
-            </a>
-            <span className="text-gray-300">|</span>
-            <a
-              href={`tel:${personalInfo.phone.replace(/\s+/g, "")}`}
-              className="hover:text-blue-700 hover:underline transition-colors"
-            >
-              {personalInfo.phone}
-            </a>
-            <span className="text-gray-300">|</span>
-            <span>{personalInfo.location}</span>
-            {personalInfo.linkedin && (
-              <>
-                <span className="text-gray-300">|</span>
-                <a
-                  href={`https://${personalInfo.linkedin.replace(/^https?:\/\//, "")}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-700 hover:underline transition-colors"
-                >
-                  {personalInfo.linkedin}
-                </a>
-              </>
-            )}
-            {personalInfo.github && (
-              <>
-                <span className="text-gray-300">|</span>
-                <a
-                  href={`https://${personalInfo.github.replace(/^https?:\/\//, "")}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-700 hover:underline transition-colors"
-                >
-                  {personalInfo.github}
-                </a>
-              </>
-            )}
-            {personalInfo.portfolio && (
-              <>
-                <span className="text-gray-300">|</span>
+            {[
+              personalInfo.portfolio && (
                 <a
                   href={`https://${personalInfo.portfolio.replace(/^https?:\/\//, "")}`}
                   target="_blank"
@@ -140,8 +98,48 @@ export const ResumePreview = React.forwardRef<HTMLDivElement, Props>(function Re
                 >
                   {personalInfo.portfolio}
                 </a>
-              </>
-            )}
+              ),
+              personalInfo.github && (
+                <a
+                  href={`https://${personalInfo.github.replace(/^https?:\/\//, "")}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-700 hover:underline transition-colors"
+                >
+                  {personalInfo.github}
+                </a>
+              ),
+              personalInfo.linkedin && (
+                <a
+                  href={`https://${personalInfo.linkedin.replace(/^https?:\/\//, "")}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-700 hover:underline transition-colors"
+                >
+                  {personalInfo.linkedin}
+                </a>
+              ),
+              <a
+                href={`mailto:${personalInfo.email}`}
+                className="hover:text-blue-700 hover:underline transition-colors"
+              >
+                {personalInfo.email}
+              </a>,
+              <a
+                href={`tel:${personalInfo.phone.replace(/\s+/g, "")}`}
+                className="hover:text-blue-700 hover:underline transition-colors"
+              >
+                {personalInfo.phone}
+              </a>,
+              <span>{personalInfo.location}</span>,
+            ]
+              .filter(Boolean)
+              .map((item, i) => (
+                <React.Fragment key={i}>
+                  {i > 0 && <span className="text-gray-300">|</span>}
+                  {item}
+                </React.Fragment>
+              ))}
           </div>
         </div>
 

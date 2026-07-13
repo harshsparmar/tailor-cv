@@ -44,25 +44,26 @@ export function buildResumeHtml(resume: ResumeData): string {
   const { personalInfo, summary, experience, education, skills, projects, certifications } = resume;
 
   // ── Header ──────────────────────────────────────────────────────────────
-  const contactParts: string[] = [
-    `<a href="mailto:${e(personalInfo.email)}" class="hover:text-blue-700 hover:underline">${e(personalInfo.email)}</a>`,
-    `<span class="text-gray-300">|</span>`,
-    `<a href="tel:${e(personalInfo.phone)}" class="hover:text-blue-700 hover:underline">${e(personalInfo.phone)}</a>`,
-    `<span class="text-gray-300">|</span>`,
-    `<span>${e(personalInfo.location)}</span>`,
-  ];
-  if (personalInfo.linkedin) {
-    contactParts.push(`<span class="text-gray-300">|</span>`);
-    contactParts.push(`<a href="${normalizeUrl(personalInfo.linkedin)}" target="_blank" class="text-blue-700 hover:underline">${e(personalInfo.linkedin)}</a>`);
-  }
-  if (personalInfo.github) {
-    contactParts.push(`<span class="text-gray-300">|</span>`);
-    contactParts.push(`<a href="${normalizeUrl(personalInfo.github)}" target="_blank" class="text-blue-700 hover:underline">${e(personalInfo.github)}</a>`);
-  }
+  const contactParts: string[] = [];
+  const addContactSep = () => { if (contactParts.length > 0) contactParts.push(`<span class="text-gray-300">|</span>`); };
   if (personalInfo.portfolio) {
-    contactParts.push(`<span class="text-gray-300">|</span>`);
+    addContactSep();
     contactParts.push(`<a href="${normalizeUrl(personalInfo.portfolio)}" target="_blank" class="text-blue-700 hover:underline">${e(personalInfo.portfolio)}</a>`);
   }
+  if (personalInfo.github) {
+    addContactSep();
+    contactParts.push(`<a href="${normalizeUrl(personalInfo.github)}" target="_blank" class="text-blue-700 hover:underline">${e(personalInfo.github)}</a>`);
+  }
+  if (personalInfo.linkedin) {
+    addContactSep();
+    contactParts.push(`<a href="${normalizeUrl(personalInfo.linkedin)}" target="_blank" class="text-blue-700 hover:underline">${e(personalInfo.linkedin)}</a>`);
+  }
+  addContactSep();
+  contactParts.push(`<a href="mailto:${e(personalInfo.email)}" class="hover:text-blue-700 hover:underline">${e(personalInfo.email)}</a>`);
+  addContactSep();
+  contactParts.push(`<a href="tel:${e(personalInfo.phone)}" class="hover:text-blue-700 hover:underline">${e(personalInfo.phone)}</a>`);
+  addContactSep();
+  contactParts.push(`<span>${e(personalInfo.location)}</span>`);
 
   const header = `
     <div class="border-b-4 border-blue-800 pb-4 mb-5">

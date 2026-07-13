@@ -127,6 +127,27 @@ export async function generateDOCX(
   const sep = () => new TextRun({ text: "  |  ", font: FONT, size: SZ_META, color: GRAY_600 });
   const addSep = () => { if (contactChildren.length > 0) contactChildren.push(sep()); };
 
+  if (personalInfo.portfolio) {
+    addSep();
+    contactChildren.push(new ExternalHyperlink({
+      link: toAbsoluteUrl(personalInfo.portfolio),
+      children: [new TextRun({ text: personalInfo.portfolio, font: FONT, size: SZ_META, color: BLUE_700, underline: { type: UnderlineType.SINGLE } })],
+    }));
+  }
+  if (personalInfo.github) {
+    addSep();
+    contactChildren.push(new ExternalHyperlink({
+      link: toAbsoluteUrl(personalInfo.github),
+      children: [new TextRun({ text: personalInfo.github, font: FONT, size: SZ_META, color: BLUE_700, underline: { type: UnderlineType.SINGLE } })],
+    }));
+  }
+  if (personalInfo.linkedin) {
+    addSep();
+    contactChildren.push(new ExternalHyperlink({
+      link: toAbsoluteUrl(personalInfo.linkedin),
+      children: [new TextRun({ text: personalInfo.linkedin, font: FONT, size: SZ_META, color: BLUE_700, underline: { type: UnderlineType.SINGLE } })],
+    }));
+  }
   if (personalInfo.email) {
     addSep();
     contactChildren.push(new ExternalHyperlink({
@@ -141,27 +162,6 @@ export async function generateDOCX(
   if (personalInfo.location) {
     addSep();
     contactChildren.push(new TextRun({ text: personalInfo.location, font: FONT, size: SZ_META, color: GRAY_600 }));
-  }
-  if (personalInfo.linkedin) {
-    addSep();
-    contactChildren.push(new ExternalHyperlink({
-      link: toAbsoluteUrl(personalInfo.linkedin),
-      children: [new TextRun({ text: personalInfo.linkedin, font: FONT, size: SZ_META, color: BLUE_700, underline: { type: UnderlineType.SINGLE } })],
-    }));
-  }
-  if (personalInfo.github) {
-    addSep();
-    contactChildren.push(new ExternalHyperlink({
-      link: toAbsoluteUrl(personalInfo.github),
-      children: [new TextRun({ text: personalInfo.github, font: FONT, size: SZ_META, color: BLUE_700, underline: { type: UnderlineType.SINGLE } })],
-    }));
-  }
-  if (personalInfo.portfolio) {
-    addSep();
-    contactChildren.push(new ExternalHyperlink({
-      link: toAbsoluteUrl(personalInfo.portfolio),
-      children: [new TextRun({ text: personalInfo.portfolio, font: FONT, size: SZ_META, color: BLUE_700, underline: { type: UnderlineType.SINGLE } })],
-    }));
   }
 
   children.push(

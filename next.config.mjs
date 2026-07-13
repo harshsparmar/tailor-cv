@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   experimental: {
-    serverComponentsExternalPackages: ["@react-pdf/renderer", "docx", "pdf-parse"],
+    serverComponentsExternalPackages: ["docx", "pdf-parse"],
   },
   webpack: (config) => {
     config.resolve.alias.canvas = false;
