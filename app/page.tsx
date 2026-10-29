@@ -365,7 +365,12 @@ export default function HomePage() {
 
       <footer className="border-t border-stone-200 dark:border-white/[0.05] py-3">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between text-[11px] text-stone-400 dark:text-stone-600">
-          <p>© 2026 TailorCV</p>
+          <p>
+            © 2026 TailorCV · Built by{" "}
+            <a href="https://www.harsh-p.dev" className="hover:underline">
+              Harsh Parmar
+            </a>
+          </p>
           <p>Resume data stays private</p>
         </div>
       </footer>
