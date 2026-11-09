@@ -1,5 +1,9 @@
 # TailorCV — AI-Powered ATS Resume Optimizer
 
+**Live demo:** [tailorcv.harsh-p.dev](https://tailorcv.harsh-p.dev)
+
+![TailorCV screenshot](https://www.harsh-p.dev/assets/tailorcv_preview.webp)
+
 An AI-powered resume tailoring tool that rewrites your resume for a specific job description, maximizes ATS keyword coverage, and exports to a pixel-perfect PDF or Word document.
 
 ---
